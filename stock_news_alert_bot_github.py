@@ -31,8 +31,8 @@ CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
 # Optional: leave empty to track ALL stocks, or add specific names to
 # ALSO always alert on them regardless of event type (e.g. stocks you hold).
 ALWAYS_ALERT_ON = [
-    # "Reliance", "TCS",
-]
+       "a", "the", "market",
+   ]
 
 # These are the event TYPES that make a stock's news "major" - any stock
 # matching one of these gets flagged, whichever company it is.
