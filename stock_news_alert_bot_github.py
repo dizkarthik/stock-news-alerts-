@@ -28,14 +28,12 @@ import logging
 BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
 
-# Optional: leave empty to track ALL stocks, or add specific names to
-# ALSO always alert on them regardless of event type (e.g. stocks you hold).
+# TEST MODE: matches almost anything, to verify the pipeline end-to-end.
+# Revert this to an empty list (or specific tickers) once testing is done.
 ALWAYS_ALERT_ON = [
-       "a", "the", "market",
-   ]
+    "a", "the", "market",
+]
 
-# These are the event TYPES that make a stock's news "major" - any stock
-# matching one of these gets flagged, whichever company it is.
 MAJOR_EVENT_KEYWORDS = {
     "Results/Earnings": [
         "quarterly results", "q1 results", "q2 results", "q3 results", "q4 results",
@@ -82,16 +80,12 @@ RSS_FEEDS = {
 
 SEEN_FILE = "seen_items.json"
 
-# NSE tags each announcement with a category - these are ones worth
-# alerting on regardless of the free-text wording.
 NSE_IMPORTANT_CATEGORIES = {
     "financial results", "board meeting", "acquisition", "amalgamation",
     "merger / demerger", "buyback", "bonus", "stock split", "dividend",
     "credit rating", "resignation", "change in directors", "insolvency",
     "fund raising", "preferential issue", "open offer",
 }
-
-# ---------------- LOGGING (prints to the GitHub Actions run log) ----------------
 
 logging.basicConfig(
     level=logging.INFO,
@@ -111,7 +105,7 @@ def load_seen():
 
 
 def save_seen(seen):
-    trimmed = list(seen)[-3000:]  # cap so the committed file doesn't grow forever
+    trimmed = list(seen)[-3000:]
     with open(SEEN_FILE, "w") as f:
         json.dump(trimmed, f)
 
@@ -132,6 +126,7 @@ def matches_major_event(text):
 
 
 def send_telegram_alert(title, link, source, match_reason):
+    print(f"DEBUG: send_telegram_alert called - title={title[:50]}", flush=True)
     if not BOT_TOKEN or not CHAT_ID:
         logging.warning("TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID not set - check repo secrets.")
         return
@@ -144,18 +139,23 @@ def send_telegram_alert(title, link, source, match_reason):
     }
     try:
         resp = requests.post(url, data=payload, timeout=10)
+        print(f"DEBUG: Telegram response status={resp.status_code} body={resp.text[:200]}", flush=True)
         if resp.status_code != 200:
             logging.error(f"Telegram send failed: {resp.status_code} {resp.text}")
     except Exception as e:
+        print(f"DEBUG: Telegram send exception: {e}", flush=True)
         logging.error(f"Telegram send exception: {e}")
 
 
 def check_rss_feeds(seen):
     new_items = 0
     for source, url in RSS_FEEDS.items():
+        print(f"DEBUG: fetching {source}", flush=True)
         try:
             feed = feedparser.parse(url)
+            print(f"DEBUG: {source} returned {len(feed.entries)} entries", flush=True)
         except Exception as e:
+            print(f"DEBUG: {source} fetch exception: {e}", flush=True)
             logging.error(f"Failed to parse feed {source}: {e}")
             continue
 
@@ -178,11 +178,6 @@ def check_rss_feeds(seen):
 
 
 def check_nse_announcements(seen):
-    """
-    Best-effort fetch - NSE actively rate-limits non-browser traffic. If
-    this consistently fails in the GitHub Actions log (403/401), the RSS
-    feeds above still provide coverage on their own.
-    """
     new_items = 0
     url = "https://www.nseindia.com/api/corporate-announcements?index=equities"
     headers = {
@@ -211,4 +206,42 @@ def check_nse_announcements(seen):
             continue
 
         symbol = item.get("symbol", "")
-        subject
+        subject = item.get("desc", "") or item.get("subject", "")
+        category = (item.get("category") or "").lower().strip()
+        combined_text = f"{symbol} {subject}"
+
+        match_reason = matches_major_event(combined_text)
+        if not match_reason and category in NSE_IMPORTANT_CATEGORIES:
+            match_reason = f"NSE category: {category}"
+
+        if match_reason:
+            title = f"{symbol}: {subject}"
+            link = item.get(
+                "attchmntFile",
+                "https://www.nseindia.com/companies-listing/corporate-filings-announcements",
+            )
+            send_telegram_alert(title, link, "NSE Announcements", match_reason)
+            new_items += 1
+
+        seen.add(item_id)
+    return new_items
+
+
+def main():
+    print("DEBUG: main() started", flush=True)
+    logging.info("Running scheduled check (single pass)")
+    seen = load_seen()
+    print(f"DEBUG: loaded {len(seen)} seen items", flush=True)
+
+    rss_new = check_rss_feeds(seen)
+    nse_new = check_nse_announcements(seen)
+    save_seen(seen)
+
+    total = rss_new + nse_new
+    logging.info(f"Done. Sent {total} new alert(s) this run.")
+    print(f"DEBUG: main() finished, total={total}", flush=True)
+
+
+print("DEBUG: script loaded, about to check __name__", flush=True)
+if __name__ == "__main__":
+    main()
