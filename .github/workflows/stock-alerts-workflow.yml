@@ -36,7 +36,7 @@ jobs:
         run: |
           git config user.name "stock-alert-bot"
           git config user.email "actions@github.com"
-          if ! git diff --quiet seen_items.json 2>/dev/null; then
+              if [ -f seen_items.json ] && [ -n "$(git status --porcelain seen_items.json)" ]; then
             git add seen_items.json
             git commit -m "Update seen items [skip ci]"
             git push
