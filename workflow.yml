@@ -1,0 +1,45 @@
+name: Stock News Alert Bot
+
+on:
+  schedule:
+    # Every 5 minutes (GitHub Actions' minimum interval).
+    # Runs are UTC-based and best-effort - expect occasional few-minute delays.
+    - cron: '*/5 * * * *'
+  workflow_dispatch: {}  # lets you trigger a manual test run from the Actions tab
+
+# Needed so the workflow can commit the updated seen_items.json back to the repo
+permissions:
+  contents: write
+
+jobs:
+  check-and-alert:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install requests feedparser
+
+      - name: Run alert check
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python stock_news_alert_bot_github.py
+
+      - name: Commit updated seen_items.json (if changed)
+        run: |
+          git config user.name "stock-alert-bot"
+          git config user.email "actions@github.com"
+          if ! git diff --quiet seen_items.json 2>/dev/null; then
+            git add seen_items.json
+            git commit -m "Update seen items [skip ci]"
+            git push
+          else
+            echo "No changes to seen_items.json - nothing to commit."
+          fi
